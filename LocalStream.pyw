@@ -314,6 +314,15 @@ class MusicPlayer(QMainWindow):
         # Playlist icon
         playlist_svg = '''<svg viewBox="0 0 24 24" fill="currentColor"><path d="M15 6H3v2h12V6zm0 4H3v2h12v-2zM3 16h8v-2H3v2zM17 6v8.18c-.31-.11-.65-.18-1-.18-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V8h3V6h-5z"/></svg>'''
         
+        # Microphone icon
+        microphone_svg = '''<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>'''
+        
+        # Folder icon
+        folder_svg = '''<svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>'''
+        
+        # Music note icon
+        music_svg = '''<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>'''
+        
         self.icons = {
             'play': self.svg_to_icon(play_svg, 20, "#000000"),
             'pause': self.svg_to_icon(pause_svg, 20, "#000000"),
@@ -327,6 +336,9 @@ class MusicPlayer(QMainWindow):
             'home': self.svg_to_icon(home_svg, 18, "#b3b3b3"),
             'library': self.svg_to_icon(library_svg, 18, "#b3b3b3"),
             'playlist': self.svg_to_icon(playlist_svg, 18, "#b3b3b3"),
+            'microphone': self.svg_to_icon(microphone_svg, 18, "#b3b3b3"),
+            'folder': self.svg_to_icon(folder_svg, 18, "#b3b3b3"),
+            'music': self.svg_to_icon(music_svg, 18, "#b3b3b3"),
         }
     
     def svg_to_icon(self, svg_string, size, color="#b3b3b3"):
@@ -447,7 +459,8 @@ class MusicPlayer(QMainWindow):
         layout.addWidget(self.create_playlist_btn)
         
         # Import playlist button
-        self.import_playlist_btn = QPushButton("📁 Import Folder")
+        self.import_playlist_btn = QPushButton(self.icons['folder'], " Import Folder")
+        self.import_playlist_btn.setIconSize(QSize(18, 18))
         self.import_playlist_btn.setStyleSheet("""
             QPushButton {
                 background-color: transparent;
@@ -465,7 +478,8 @@ class MusicPlayer(QMainWindow):
         layout.addWidget(self.import_playlist_btn)
         
         # Import from Spotify button
-        self.import_spotify_btn = QPushButton("🎵 Import from Spotify")
+        self.import_spotify_btn = QPushButton(self.icons['music'], " Import from Spotify")
+        self.import_spotify_btn.setIconSize(QSize(18, 18))
         self.import_spotify_btn.setStyleSheet("""
             QPushButton {
                 background-color: transparent;
@@ -706,15 +720,15 @@ class MusicPlayer(QMainWindow):
         volume_layout.addStretch()
         
         # Lyrics toggle button
-        self.lyrics_btn = QPushButton("🎤")
+        self.lyrics_btn = QPushButton(self.icons['microphone'], "")
         self.lyrics_btn.setFixedSize(32, 32)
+        self.lyrics_btn.setIconSize(QSize(18, 18))
         self.lyrics_btn.setStyleSheet("""
             QPushButton {
                 background-color: transparent;
                 color: #b3b3b3;
                 border: none;
                 border-radius: 16px;
-                font-size: 16px;
             }
             QPushButton:hover {
                 color: #ffffff;
@@ -1884,28 +1898,30 @@ class MusicPlayer(QMainWindow):
         self.lyrics_visible = not self.lyrics_visible
         self.lyrics_panel.setVisible(self.lyrics_visible)
         
-        # Update button style
+        # Update button style and icon
         if self.lyrics_visible:
+            # Create green icon for active state
+            microphone_svg = '''<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>'''
+            self.lyrics_btn.setIcon(self.svg_to_icon(microphone_svg, 18, "#1DB954"))
             self.lyrics_btn.setStyleSheet("""
                 QPushButton {
                     background-color: #282828;
-                    color: #1DB954;
                     border: none;
                     border-radius: 16px;
-                    font-size: 16px;
                 }
                 QPushButton:hover {
                     background-color: #3e3e3e;
                 }
             """)
         else:
+            # Reset to default gray icon
+            self.lyrics_btn.setIcon(self.icons['microphone'])
             self.lyrics_btn.setStyleSheet("""
                 QPushButton {
                     background-color: transparent;
                     color: #b3b3b3;
                     border: none;
                     border-radius: 16px;
-                    font-size: 16px;
                 }
                 QPushButton:hover {
                     color: #ffffff;
