@@ -8,18 +8,195 @@ import os
 import csv
 import json
 import random
+import subprocess
+import threading
 from pathlib import Path
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QPushButton, QSlider, QLabel, 
                              QListWidget, QListWidgetItem, QLineEdit, QSplitter,
-                             QFileDialog, QMessageBox, QFrame, QInputDialog, QMenu)
-from PyQt6.QtCore import Qt, QTimer, QSize, pyqtSignal, QUrl, QByteArray, QPoint, QMimeData
+                             QFileDialog, QMessageBox, QFrame, QInputDialog, QMenu,
+                             QDialog, QTextEdit, QProgressBar)
+from PyQt6.QtCore import Qt, QTimer, QSize, pyqtSignal, QUrl, QByteArray, QPoint, QMimeData, QThread, QObject
 from PyQt6.QtGui import QIcon, QFont, QPalette, QColor, QPixmap, QPainter, QAction, QDrag
 from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 import mutagen
 from mutagen.mp3 import MP3
 from mutagen.id3 import ID3
+
+
+class DownloadDialog(QDialog):
+    """Dialog window with console output for downloads"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Downloading from Spotify")
+        self.setModal(False)
+        self.setMinimumSize(600, 400)
+        
+        layout = QVBoxLayout(self)
+        
+        # Status label
+        self.status_label = QLabel("Initializing download...")
+        self.status_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        layout.addWidget(self.status_label)
+        
+        # Progress bar
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 0)  # Indeterminate
+        layout.addWidget(self.progress_bar)
+        
+        # Console output
+        console_label = QLabel("Console Output:")
+        console_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        layout.addWidget(console_label)
+        
+        self.console = QTextEdit()
+        self.console.setReadOnly(True)
+        self.console.setStyleSheet("""
+            QTextEdit {
+                background-color: #1e1e1e;
+                color: #d4d4d4;
+                font-family: 'Consolas', 'Courier New', monospace;
+                font-size: 11px;
+                border: 1px solid #3e3e3e;
+            }
+        """)
+        layout.addWidget(self.console)
+        
+        # Close button (disabled initially)
+        self.close_btn = QPushButton("Close")
+        self.close_btn.setEnabled(False)
+        self.close_btn.clicked.connect(self.accept)
+        layout.addWidget(self.close_btn)
+        
+    def append_output(self, text):
+        """Append text to console"""
+        self.console.append(text)
+        self.console.verticalScrollBar().setValue(
+            self.console.verticalScrollBar().maximum()
+        )
+    
+    def set_status(self, text):
+        """Update status label"""
+        self.status_label.setText(text)
+    
+    def set_progress_range(self, min_val, max_val):
+        """Set progress bar range"""
+        self.progress_bar.setRange(min_val, max_val)
+    
+    def set_progress_value(self, value):
+        """Set progress bar value"""
+        self.progress_bar.setValue(value)
+    
+    def enable_close(self):
+        """Enable close button when done"""
+        self.close_btn.setEnabled(True)
+        self.progress_bar.setRange(0, 1)
+        self.progress_bar.setValue(1)
+
+
+class DownloadWorker(QObject):
+    """Worker for downloading in separate thread"""
+    output = pyqtSignal(str)
+    status = pyqtSignal(str)
+    progress = pyqtSignal(int, int)
+    finished = pyqtSignal(bool, str, list)  # success, error_msg, songs
+    
+    def __init__(self, url, download_dir):
+        super().__init__()
+        self.url = url
+        self.download_dir = download_dir
+        self.should_stop = False
+    
+    def run(self):
+        """Run download process"""
+        try:
+            self.status.emit("Starting download...")
+            self.output.emit(f"Download directory: {self.download_dir}\n")
+            self.output.emit(f"Spotify URL: {self.url}\n")
+            self.output.emit("-" * 60 + "\n\n")
+            
+            # Run spotdl
+            process = subprocess.Popen([
+                "spotdl",
+                "download",
+                self.url,
+                "--output", str(self.download_dir),
+                "--format", "mp3",
+                "--bitrate", "320k",
+                "--audio", "youtube"
+            ], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
+               text=True, bufsize=1, universal_newlines=True)
+            
+            # Read output line by line
+            for line in process.stdout:
+                if self.should_stop:
+                    process.terminate()
+                    self.finished.emit(False, "Cancelled by user", [])
+                    return
+                self.output.emit(line.rstrip())
+            
+            process.wait()
+            
+            if process.returncode == 0:
+                self.status.emit("Download complete! Loading songs...")
+                self.output.emit("\n" + "-" * 60 + "\n")
+                self.output.emit("Download completed successfully!\n")
+                self.output.emit("Loading song metadata...\n\n")
+                
+                # Load downloaded songs
+                songs = []
+                mp3_files = list(Path(self.download_dir).glob("*.mp3"))
+                
+                for i, file in enumerate(mp3_files):
+                    try:
+                        self.output.emit(f"Loading: {file.name}\n")
+                        audio = MP3(file)
+                        duration = int(audio.info.length)
+                        
+                        title = file.stem
+                        artist = "Unknown Artist"
+                        album = "Unknown Album"
+                        
+                        if audio.tags:
+                            title = str(audio.tags.get("TIT2", title))
+                            artist = str(audio.tags.get("TPE1", artist))
+                            album = str(audio.tags.get("TALB", album))
+                        
+                        # Extract album art
+                        album_art_data = None
+                        try:
+                            if audio.tags:
+                                for tag in audio.tags.values():
+                                    if hasattr(tag, 'mime') and tag.mime.startswith('image/'):
+                                        album_art_data = tag.data
+                                        break
+                        except:
+                            pass
+                        
+                        song_info = {
+                            "title": title,
+                            "artist": artist,
+                            "album": album,
+                            "duration": duration,
+                            "path": str(file),
+                            "filename": file.name,
+                            "album_art": album_art_data
+                        }
+                        songs.append(song_info)
+                    except Exception as e:
+                        self.output.emit(f"Error loading {file.name}: {e}\n")
+                
+                self.output.emit(f"\nSuccessfully loaded {len(songs)} songs!\n")
+                self.finished.emit(True, "", songs)
+            else:
+                self.finished.emit(False, "Download process failed", [])
+        except Exception as e:
+            self.finished.emit(False, str(e), [])
+    
+    def stop(self):
+        """Stop the download"""
+        self.should_stop = True
 
 
 class MusicPlayer(QMainWindow):
@@ -54,6 +231,15 @@ class MusicPlayer(QMainWindow):
         
         # Settings storage
         self.settings_file = Path(__file__).parent / "settings.json"
+        
+        # Download threads storage (prevent garbage collection)
+        self.active_downloads = []
+        
+        # Lyrics storage
+        self.current_lyrics = ""
+        self.lyrics_visible = False
+        self.synced_lyrics = []  # List of (timestamp_ms, text) tuples
+        self.current_lyric_index = -1
         
         # Setup UI
         self.setup_ui()
@@ -173,7 +359,7 @@ class MusicPlayer(QMainWindow):
         sidebar = self.create_sidebar()
         splitter.addWidget(sidebar)
         
-        # === MAIN CONTENT ===
+        # === MAIN CONTENT (with lyrics panel) ===
         main_content = self.create_main_content()
         splitter.addWidget(main_content)
         
@@ -278,6 +464,24 @@ class MusicPlayer(QMainWindow):
         self.import_playlist_btn.clicked.connect(self.import_playlist_from_folder)
         layout.addWidget(self.import_playlist_btn)
         
+        # Import from Spotify button
+        self.import_spotify_btn = QPushButton("🎵 Import from Spotify")
+        self.import_spotify_btn.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                color: #b3b3b3;
+                text-align: left;
+                padding: 8px 15px;
+                border: none;
+                font-size: 13px;
+            }
+            QPushButton:hover {
+                color: #ffffff;
+            }
+        """)
+        self.import_spotify_btn.clicked.connect(self.import_from_spotify)
+        layout.addWidget(self.import_spotify_btn)
+        
         # Playlist list
         self.playlist_list = QListWidget()
         self.playlist_list.setStyleSheet("""
@@ -379,7 +583,32 @@ class MusicPlayer(QMainWindow):
         self.song_list.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.song_list.model().rowsMoved.connect(self.on_songs_reordered)
         
-        layout.addWidget(self.song_list)
+        # Create splitter for song list and lyrics panel
+        content_splitter = QSplitter(Qt.Orientation.Horizontal)
+        content_splitter.setStyleSheet("QSplitter::handle { background-color: #282828; }")
+        content_splitter.addWidget(self.song_list)
+        
+        # === LYRICS PANEL ===
+        self.lyrics_panel = QTextEdit()
+        self.lyrics_panel.setReadOnly(True)
+        self.lyrics_panel.setStyleSheet("""
+            QTextEdit {
+                background-color: #121212;
+                border-left: 1px solid #282828;
+                color: #b3b3b3;
+                font-size: 15px;
+                line-height: 2.0;
+                padding: 30px;
+            }
+        """)
+        self.lyrics_panel.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lyrics_panel.setVisible(self.lyrics_visible)
+        content_splitter.addWidget(self.lyrics_panel)
+        
+        content_splitter.setStretchFactor(0, 3)
+        content_splitter.setStretchFactor(1, 1)
+        
+        layout.addWidget(content_splitter, 1)  # Add stretch factor
         
         return main_widget
     
@@ -472,9 +701,35 @@ class MusicPlayer(QMainWindow):
         
         top_row.addLayout(controls, 1)
         
-        # === VOLUME CONTROL ===
+        # === VOLUME CONTROL & LYRICS TOGGLE ===
         volume_layout = QHBoxLayout()
         volume_layout.addStretch()
+        
+        # Lyrics toggle button
+        self.lyrics_btn = QPushButton("🎤")
+        self.lyrics_btn.setFixedSize(32, 32)
+        self.lyrics_btn.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                color: #b3b3b3;
+                border: none;
+                border-radius: 16px;
+                font-size: 16px;
+            }
+            QPushButton:hover {
+                color: #ffffff;
+                background-color: #282828;
+            }
+            QPushButton:pressed {
+                background-color: #3e3e3e;
+            }
+        """)
+        self.lyrics_btn.clicked.connect(self.toggle_lyrics)
+        self.lyrics_btn.setToolTip("Toggle Lyrics")
+        volume_layout.addWidget(self.lyrics_btn)
+        
+        volume_layout.addSpacing(15)
+        
         volume_icon = QLabel()
         volume_icon.setPixmap(self.icons['volume'].pixmap(18, 18))
         volume_layout.addWidget(volume_icon)
@@ -1011,6 +1266,150 @@ class MusicPlayer(QMainWindow):
         QMessageBox.information(self, "Import Complete", 
                                f"Imported {len(songs)} songs into playlist '{name}'!")
     
+    def import_from_spotify(self):
+        """Import songs from Spotify URL using spotdl"""
+        # Ask for Spotify URL
+        url, ok = QInputDialog.getText(self, "Import from Spotify", 
+                                       "Enter Spotify URL (song, album, or playlist):")
+        
+        if not ok or not url:
+            return
+        
+        # Validate URL
+        if not ("spotify.com" in url or "spotify:" in url):
+            QMessageBox.warning(self, "Invalid URL", "Please enter a valid Spotify URL.")
+            return
+        
+        # Ask for playlist name
+        name, ok = QInputDialog.getText(self, "Playlist Name", 
+                                       "Enter name for the playlist:")
+        
+        if not ok or not name:
+            return
+        
+        # Check if spotdl is installed
+        try:
+            subprocess.run(["spotdl", "--version"], capture_output=True, check=True)
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            reply = QMessageBox.question(self, "spotdl Not Found", 
+                                        "spotdl is not installed. Install it now?\n\n"
+                                        "This will run: pip install spotdl",
+                                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if reply == QMessageBox.StandardButton.Yes:
+                # Create install dialog
+                install_dialog = DownloadDialog(None)  # No parent = separate window
+                install_dialog.setWindowTitle("Installing spotdl")
+                install_dialog.set_status("Installing spotdl...")
+                install_dialog.show()
+                
+                def install_thread():
+                    try:
+                        install_dialog.append_output("Running: pip install spotdl\n\n")
+                        process = subprocess.Popen(
+                            [sys.executable, "-m", "pip", "install", "spotdl"],
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True, bufsize=1, universal_newlines=True
+                        )
+                        
+                        for line in process.stdout:
+                            install_dialog.append_output(line.rstrip())
+                        
+                        process.wait()
+                        
+                        if process.returncode == 0:
+                            install_dialog.set_status("Installation complete!")
+                            install_dialog.append_output("\n✓ spotdl installed successfully!\n")
+                        else:
+                            install_dialog.set_status("Installation failed!")
+                            install_dialog.append_output("\n✗ Installation failed!\n")
+                        
+                        install_dialog.enable_close()
+                    except Exception as e:
+                        install_dialog.set_status("Installation failed!")
+                        install_dialog.append_output(f"\n✗ Error: {e}\n")
+                        install_dialog.enable_close()
+                
+                thread = threading.Thread(target=install_thread, daemon=True)
+                thread.start()
+                
+                result = install_dialog.exec()
+                
+                # Verify installation
+                try:
+                    subprocess.run(["spotdl", "--version"], capture_output=True, check=True)
+                except:
+                    QMessageBox.critical(self, "Installation Failed", 
+                                       "spotdl installation failed. Please install manually.")
+                    return
+            else:
+                return
+        
+        # Create download directory
+        download_dir = self.music_folder / name
+        download_dir.mkdir(exist_ok=True)
+        
+        # Create download dialog (no parent = separate window)
+        dialog = DownloadDialog(None)
+        dialog.show()
+        
+        # Create worker and thread
+        worker = DownloadWorker(url, download_dir)
+        thread = QThread()
+        worker.moveToThread(thread)
+        
+        # Store references to prevent garbage collection
+        download_data = {
+            'worker': worker,
+            'thread': thread,
+            'dialog': dialog,
+            'name': name
+        }
+        self.active_downloads.append(download_data)
+        
+        # Connect signals
+        worker.output.connect(dialog.append_output)
+        worker.status.connect(dialog.set_status)
+        worker.progress.connect(lambda min_v, max_v: dialog.set_progress_range(min_v, max_v))
+        
+        def on_finished(success, error_msg, songs):
+            if success:
+                dialog.set_status(f"✓ Complete! Imported {len(songs)} songs")
+                
+                # Add to global library
+                for song in songs:
+                    if song["path"] not in [s["path"] for s in self.all_songs]:
+                        self.all_songs.append(song)
+                
+                # Create playlist
+                self.playlists[name] = {
+                    "songs": songs,
+                    "created": "imported",
+                    "persistent": True
+                }
+                self.save_playlists()
+                self.refresh_playlist_sidebar()
+                
+                QMessageBox.information(None, "Import Complete", 
+                                      f"Downloaded and imported {len(songs)} songs into playlist '{name}'!")
+            else:
+                dialog.set_status(f"✗ Failed: {error_msg}")
+                QMessageBox.critical(None, "Download Failed", 
+                                   f"Failed to download from Spotify:\n\n{error_msg}")
+            
+            # Clean up after completion
+            dialog.enable_close()
+            thread.quit()
+            thread.wait()
+            
+            # Remove from active downloads
+            self.active_downloads = [d for d in self.active_downloads if d['thread'] != thread]
+        
+        worker.finished.connect(on_finished)
+        thread.started.connect(worker.run)
+        
+        # Start download
+        thread.start()
+    
     def playlist_drag_enter(self, event):
         """Handle drag enter event for playlist list"""
         if event.mimeData().hasFormat("application/x-song-index"):
@@ -1380,6 +1779,9 @@ class MusicPlayer(QMainWindow):
                 self.album_art.clear()
                 self.album_art.setStyleSheet("background-color: #282828; border-radius: 4px;")
             
+            # Load lyrics
+            self.load_lyrics(song["path"])
+            
             # Add to history
             self.play_history.append(index)
             if len(self.play_history) > 50:
@@ -1477,6 +1879,43 @@ class MusicPlayer(QMainWindow):
         self.repeat_mode = (self.repeat_mode + 1) % 3
         self.update_repeat_button()
     
+    def toggle_lyrics(self):
+        """Toggle lyrics panel visibility"""
+        self.lyrics_visible = not self.lyrics_visible
+        self.lyrics_panel.setVisible(self.lyrics_visible)
+        
+        # Update button style
+        if self.lyrics_visible:
+            self.lyrics_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #282828;
+                    color: #1DB954;
+                    border: none;
+                    border-radius: 16px;
+                    font-size: 16px;
+                }
+                QPushButton:hover {
+                    background-color: #3e3e3e;
+                }
+            """)
+        else:
+            self.lyrics_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: transparent;
+                    color: #b3b3b3;
+                    border: none;
+                    border-radius: 16px;
+                    font-size: 16px;
+                }
+                QPushButton:hover {
+                    color: #ffffff;
+                    background-color: #282828;
+                }
+                QPushButton:pressed {
+                    background-color: #3e3e3e;
+                }
+            """)
+    
     def update_repeat_button(self):
         """Update repeat button icon and appearance"""
         if self.repeat_mode == 0:
@@ -1565,6 +2004,156 @@ class MusicPlayer(QMainWindow):
         # Save immediately so we don't lose it
         self.save_settings()
     
+    def load_lyrics(self, file_path):
+        """Load and display lyrics from MP3 file or LRC file"""
+        try:
+            self.synced_lyrics = []
+            self.current_lyric_index = -1
+            lyrics = ""
+            
+            # First, check for external LRC file
+            lrc_path = Path(file_path).with_suffix('.lrc')
+            if lrc_path.exists():
+                print(f"Found LRC file: {lrc_path}")
+                lyrics = lrc_path.read_text(encoding='utf-8')
+                if self.parse_lrc(lyrics):
+                    print(f"Parsed {len(self.synced_lyrics)} synced lyrics lines")
+                    self.display_synced_lyrics()
+                    return
+            
+            # Try to get lyrics from MP3 tags
+            audio = MP3(file_path)
+            if hasattr(audio, 'tags') and audio.tags:
+                # Check for USLT (Unsynchronised lyrics/text transcription)
+                uslt_frames = audio.tags.getall('USLT')
+                if uslt_frames:
+                    lyrics = uslt_frames[0].text
+                    # Check if it's LRC format
+                    if '[' in lyrics and ']' in lyrics and ':' in lyrics:
+                        if self.parse_lrc(lyrics):
+                            print(f"Parsed {len(self.synced_lyrics)} synced lyrics from USLT tags")
+                            self.display_synced_lyrics()
+                            return
+                
+                # Check for non-standard lyrics tags (lyrics-XXX, LYRICS, etc.)
+                if not lyrics:
+                    for key in audio.tags.keys():
+                        if 'lyric' in key.lower():
+                            try:
+                                tag_value = audio.tags.get(key)
+                                if tag_value and hasattr(tag_value, 'text'):
+                                    lyrics = '\n'.join(tag_value.text) if isinstance(tag_value.text, list) else str(tag_value.text)
+                                    print(f"Found lyrics in tag: {key}")
+                                    break
+                            except:
+                                pass
+                
+                # Check for SYLT (Synchronised lyrics/text)
+                if not lyrics:
+                    sylt_frames = audio.tags.getall('SYLT')
+                    if sylt_frames:
+                        # SYLT contains (text, timestamp) tuples
+                        for text, timestamp in sylt_frames[0].text:
+                            self.synced_lyrics.append((timestamp, text))
+                        if self.synced_lyrics:
+                            print(f"Found {len(self.synced_lyrics)} SYLT lyrics")
+                            self.display_synced_lyrics()
+                            return
+            
+            # Display unsynced lyrics
+            if lyrics:
+                self.current_lyrics = lyrics
+                # Format the lyrics nicely
+                formatted_lyrics = lyrics.replace('\n\n', '<br><br>').replace('\n', '<br>')
+                self.lyrics_panel.setHtml(f'<div style="text-align: center; color: #b3b3b3; line-height: 1.8;">{formatted_lyrics}<br><br><span style="color: #666666; font-size: 12px; font-style: italic;">Add a .lrc file with the same name for synced lyrics</span></div>')
+                print("Displaying unsynced lyrics")
+            else:
+                self.current_lyrics = ""
+                self.lyrics_panel.setHtml('<div style="text-align: center; color: #666666; font-style: italic;">No lyrics available for this track.<br><br>Add a .lrc file with the same name for synced lyrics.</div>')
+                
+        except Exception as e:
+            print(f"Error loading lyrics: {e}")
+            import traceback
+            traceback.print_exc()
+            self.current_lyrics = ""
+            self.synced_lyrics = []
+            self.lyrics_panel.setHtml('<div style="text-align: center; color: #666666; font-style: italic;">Could not load lyrics.</div>')
+    
+    def parse_lrc(self, lrc_text):
+        """Parse LRC format lyrics"""
+        import re
+        self.synced_lyrics = []
+        
+        # LRC format: [mm:ss.xx]lyric text
+        pattern = r'\[(\d+):(\d+\.?\d*)\](.*)'
+        
+        for line in lrc_text.split('\n'):
+            match = re.match(pattern, line)
+            if match:
+                minutes = int(match.group(1))
+                seconds = float(match.group(2))
+                text = match.group(3).strip()
+                timestamp_ms = int((minutes * 60 + seconds) * 1000)
+                if text:  # Only add non-empty lines
+                    self.synced_lyrics.append((timestamp_ms, text))
+        
+        # Sort by timestamp
+        self.synced_lyrics.sort(key=lambda x: x[0])
+        return len(self.synced_lyrics) > 0
+    
+    def display_synced_lyrics(self):
+        """Display synchronized lyrics with initial styling"""
+        if not self.synced_lyrics:
+            return
+        
+        html = '<div style="text-align: center; line-height: 2.5;">\n'
+        for i, (_, text) in enumerate(self.synced_lyrics):
+            html += f'<p id="lyric_{i}" style="color: #666666; margin: 10px 0; font-size: 15px;">{text}</p>\n'
+        html += '</div>'
+        
+        self.lyrics_panel.setHtml(html)
+    
+    def update_lyrics_highlight(self, position_ms):
+        """Update highlighted lyric line based on playback position"""
+        if not self.synced_lyrics or not self.lyrics_visible:
+            return
+        
+        # Find current lyric index
+        current_index = -1
+        for i, (timestamp, _) in enumerate(self.synced_lyrics):
+            if timestamp <= position_ms:
+                current_index = i
+            else:
+                break
+        
+        # Update highlight if changed
+        if current_index != self.current_lyric_index and current_index >= 0:
+            self.current_lyric_index = current_index
+            print(f"Highlighting lyric {current_index} at {position_ms}ms")
+            
+            # Rebuild HTML with current line highlighted
+            html = '<div style="text-align: center; line-height: 2.5;">\n'
+            for i, (_, text) in enumerate(self.synced_lyrics):
+                if i == current_index:
+                    # Highlight current line
+                    html += f'<p id="lyric_{i}" style="color: #ffffff; font-weight: bold; font-size: 17px; margin: 10px 0; text-shadow: 0 0 10px rgba(29, 185, 84, 0.5);">{text}</p>\n'
+                elif abs(i - current_index) <= 1:
+                    # Slightly brighter for adjacent lines
+                    html += f'<p id="lyric_{i}" style="color: #999999; margin: 10px 0; font-size: 15px;">{text}</p>\n'
+                else:
+                    # Dimmed for other lines
+                    html += f'<p id="lyric_{i}" style="color: #666666; margin: 10px 0; font-size: 15px;">{text}</p>\n'
+            html += '</div>'
+            
+            self.lyrics_panel.setHtml(html)
+            
+            # Auto-scroll to current line (approximate)
+            if current_index > 2:
+                cursor = self.lyrics_panel.textCursor()
+                # Scroll to keep current line roughly centered
+                scroll_position = int((current_index / len(self.synced_lyrics)) * self.lyrics_panel.verticalScrollBar().maximum())
+                self.lyrics_panel.verticalScrollBar().setValue(scroll_position)
+    
     def on_search(self, text):
         """Filter songs based on search"""
         if not text:
@@ -1608,7 +2197,10 @@ class MusicPlayer(QMainWindow):
     
     def update_ui(self):
         """Periodic UI updates"""
-        pass
+        # Update lyrics highlight if synced lyrics are available
+        if self.synced_lyrics and self.is_playing:
+            position_ms = self.player.position()
+            self.update_lyrics_highlight(position_ms)
     
     def load_settings(self):
         """Load saved settings"""
@@ -1652,6 +2244,23 @@ class MusicPlayer(QMainWindow):
         """Handle window close"""
         self.save_settings()
         self.save_playlists()
+        
+        # Clean up active downloads
+        for download_data in self.active_downloads:
+            thread = download_data['thread']
+            worker = download_data['worker']
+            dialog = download_data['dialog']
+            
+            # Stop worker
+            worker.stop()
+            
+            # Quit thread and wait
+            thread.quit()
+            thread.wait(2000)  # Wait max 2 seconds
+            
+            # Close dialog
+            dialog.close()
+        
         event.accept()
 
 
