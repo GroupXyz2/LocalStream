@@ -35,17 +35,14 @@ class DownloadDialog(QDialog):
         
         layout = QVBoxLayout(self)
         
-        # Status label
         self.status_label = QLabel("Initializing download...")
         self.status_label.setStyleSheet("font-weight: bold; font-size: 14px;")
         layout.addWidget(self.status_label)
         
-        # Progress bar
         self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 0)  # Indeterminate
+        self.progress_bar.setRange(0, 0)
         layout.addWidget(self.progress_bar)
         
-        # Console output
         console_label = QLabel("Console Output:")
         console_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
         layout.addWidget(console_label)
@@ -63,7 +60,6 @@ class DownloadDialog(QDialog):
         """)
         layout.addWidget(self.console)
         
-        # Close button (disabled initially)
         self.close_btn = QPushButton("Close")
         self.close_btn.setEnabled(False)
         self.close_btn.clicked.connect(self.accept)
@@ -100,7 +96,7 @@ class DownloadWorker(QObject):
     output = pyqtSignal(str)
     status = pyqtSignal(str)
     progress = pyqtSignal(int, int)
-    finished = pyqtSignal(bool, str, list)  # success, error_msg, songs
+    finished = pyqtSignal(bool, str, list)
     
     def __init__(self, url, download_dir):
         super().__init__()
@@ -116,7 +112,6 @@ class DownloadWorker(QObject):
             self.output.emit(f"Spotify URL: {self.url}\n")
             self.output.emit("-" * 60 + "\n\n")
             
-            # Run spotdl
             process = subprocess.Popen([
                 "spotdl",
                 "download",
@@ -128,7 +123,6 @@ class DownloadWorker(QObject):
             ], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
                text=True, bufsize=1, universal_newlines=True)
             
-            # Read output line by line
             for line in process.stdout:
                 if self.should_stop:
                     process.terminate()
@@ -144,7 +138,6 @@ class DownloadWorker(QObject):
                 self.output.emit("Download completed successfully!\n")
                 self.output.emit("Loading song metadata...\n\n")
                 
-                # Load downloaded songs
                 songs = []
                 mp3_files = list(Path(self.download_dir).glob("*.mp3"))
                 
@@ -163,7 +156,6 @@ class DownloadWorker(QObject):
                             artist = str(audio.tags.get("TPE1", artist))
                             album = str(audio.tags.get("TALB", album))
                         
-                        # Extract album art
                         album_art_data = None
                         try:
                             if audio.tags:
@@ -205,56 +197,45 @@ class MusicPlayer(QMainWindow):
         self.setWindowTitle("LocalStream - Your Music Library")
         self.setGeometry(100, 100, 1400, 800)
         
-        # Create SVG icons
         self.create_icons()
         
-        # Audio setup with high quality
         self.player = QMediaPlayer()
         self.audio_output = QAudioOutput()
         self.player.setAudioOutput(self.audio_output)
         self.audio_output.setVolume(0.7)
         
-        # Music library
         self.music_folder = Path(__file__).parent / "AnimeOpenings"
         self.current_playlist = []
         self.current_playlist_name = None
         self.current_index = -1
         self.is_playing = False
         self.is_shuffle = False
-        self.repeat_mode = 0  # 0: no repeat, 1: repeat all, 2: repeat one
+        self.repeat_mode = 0
         self.queue = []
         self.play_history = []
         
-        # Playlists storage
         self.playlists = {}
         self.playlists_file = Path(__file__).parent / "playlists.json"
         
-        # Settings storage
         self.settings_file = Path(__file__).parent / "settings.json"
         
-        # Download threads storage (prevent garbage collection)
         self.active_downloads = []
         
-        # Lyrics storage
         self.current_lyrics = ""
         self.lyrics_visible = False
-        self.synced_lyrics = []  # List of (timestamp_ms, text) tuples
+        self.synced_lyrics = []
         self.current_lyric_index = -1
         
-        # Setup UI
         self.setup_ui()
         self.apply_dark_theme()
         
-        # Load settings AFTER UI is created so slider exists
         self.load_settings()
         
-        # Load music library first, then playlists
         self.load_music_library()
         self.load_playlists()
         self.load_spotify_playlist()
         self.refresh_playlist_sidebar()
         
-        # Display Spotify playlist by default if it exists, otherwise show library
         if "Anime Openings (Spotify)" in self.playlists:
             self.current_playlist_name = "Anime Openings (Spotify)"
             self.view_label.setText("Anime Openings (Spotify)")
@@ -264,12 +245,10 @@ class MusicPlayer(QMainWindow):
             self.view_label.setText("Your Library")
             self.display_songs(self.all_songs)
         
-        # Connect player signals
         self.player.positionChanged.connect(self.update_position)
         self.player.durationChanged.connect(self.update_duration)
         self.player.mediaStatusChanged.connect(self.on_media_status_changed)
         
-        # Update timer for smooth UI updates
         self.update_timer = QTimer()
         self.update_timer.timeout.connect(self.update_ui)
         self.update_timer.start(100)
@@ -278,49 +257,34 @@ class MusicPlayer(QMainWindow):
         """Create SVG icons for the UI"""
         self.icons = {}
         
-        # Play icon
         play_svg = '''<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>'''
         
-        # Pause icon
         pause_svg = '''<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/></svg>'''
         
-        # Next icon
         next_svg = '''<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l10 8-10 8V4zm12 0v16h2V4h-2z"/></svg>'''
         
-        # Previous icon
         prev_svg = '''<svg viewBox="0 0 24 24" fill="currentColor"><path d="M18 4v16l-10-8 10-8zM6 4h2v16H6V4z"/></svg>'''
         
-        # Shuffle icon
         shuffle_svg = '''<svg viewBox="0 0 24 24" fill="currentColor"><path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/></svg>'''
         
-        # Repeat icon
         repeat_svg = '''<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg>'''
         
-        # Repeat one icon
         repeat_one_svg = '''<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4zm-6-2h2V9h-2v2h-1v2h1v4z"/></svg>'''
         
-        # Volume icon
         volume_svg = '''<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>'''
         
-        # Search icon
         search_svg = '''<svg viewBox="0 0 24 24" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>'''
         
-        # Home icon
         home_svg = '''<svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>'''
         
-        # Library icon
         library_svg = '''<svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-1 9H9V9h10v2zm-4 4H9v-2h6v2zm4-8H9V5h10v2z"/></svg>'''
         
-        # Playlist icon
         playlist_svg = '''<svg viewBox="0 0 24 24" fill="currentColor"><path d="M15 6H3v2h12V6zm0 4H3v2h12v-2zM3 16h8v-2H3v2zM17 6v8.18c-.31-.11-.65-.18-1-.18-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V8h3V6h-5z"/></svg>'''
         
-        # Microphone icon
         microphone_svg = '''<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>'''
         
-        # Folder icon
         folder_svg = '''<svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>'''
         
-        # Music note icon
         music_svg = '''<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>'''
         
         self.icons = {
@@ -343,7 +307,6 @@ class MusicPlayer(QMainWindow):
     
     def svg_to_icon(self, svg_string, size, color="#b3b3b3"):
         """Convert SVG string to QIcon with specified color"""
-        # Replace currentColor with actual color
         svg_string = svg_string.replace('fill="currentColor"', f'fill="{color}"')
         
         pixmap = QPixmap(size, size)
@@ -364,14 +327,11 @@ class MusicPlayer(QMainWindow):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
         
-        # Create splitter for sidebar and main content
         splitter = QSplitter(Qt.Orientation.Horizontal)
         
-        # === LEFT SIDEBAR ===
         sidebar = self.create_sidebar()
         splitter.addWidget(sidebar)
         
-        # === MAIN CONTENT (with lyrics panel) ===
         main_content = self.create_main_content()
         splitter.addWidget(main_content)
         
@@ -381,7 +341,6 @@ class MusicPlayer(QMainWindow):
         
         main_layout.addWidget(splitter)
         
-        # === BOTTOM PLAYER CONTROLS ===
         player_control = self.create_player_controls()
         main_layout.addWidget(player_control)
     
@@ -395,12 +354,10 @@ class MusicPlayer(QMainWindow):
         layout.setSpacing(5)
         layout.setContentsMargins(10, 20, 10, 10)
         
-        # Logo/Title
         title = QLabel("LocalStream")
         title.setStyleSheet("color: #1DB954; font-size: 28px; font-weight: bold; padding: 10px;")
         layout.addWidget(title)
         
-        # Navigation buttons
         self.nav_buttons = {}
         nav_items = [
             ("Home", "home", self.icons['home']),
@@ -435,12 +392,10 @@ class MusicPlayer(QMainWindow):
         
         layout.addSpacing(20)
         
-        # Playlists section
         playlists_label = QLabel("PLAYLISTS")
         playlists_label.setStyleSheet("color: #b3b3b3; font-size: 12px; font-weight: bold; padding: 10px;")
         layout.addWidget(playlists_label)
         
-        # Create playlist button
         self.create_playlist_btn = QPushButton("+ Create Playlist")
         self.create_playlist_btn.setStyleSheet("""
             QPushButton {
@@ -458,7 +413,6 @@ class MusicPlayer(QMainWindow):
         self.create_playlist_btn.clicked.connect(self.create_new_playlist)
         layout.addWidget(self.create_playlist_btn)
         
-        # Import playlist button
         self.import_playlist_btn = QPushButton(self.icons['folder'], " Import Folder")
         self.import_playlist_btn.setIconSize(QSize(18, 18))
         self.import_playlist_btn.setStyleSheet("""
@@ -477,7 +431,6 @@ class MusicPlayer(QMainWindow):
         self.import_playlist_btn.clicked.connect(self.import_playlist_from_folder)
         layout.addWidget(self.import_playlist_btn)
         
-        # Import from Spotify button
         self.import_spotify_btn = QPushButton(self.icons['music'], " Import from Spotify")
         self.import_spotify_btn.setIconSize(QSize(18, 18))
         self.import_spotify_btn.setStyleSheet("""
@@ -496,7 +449,6 @@ class MusicPlayer(QMainWindow):
         self.import_spotify_btn.clicked.connect(self.import_from_spotify)
         layout.addWidget(self.import_spotify_btn)
         
-        # Playlist list
         self.playlist_list = QListWidget()
         self.playlist_list.setStyleSheet("""
             QListWidget {
@@ -539,7 +491,6 @@ class MusicPlayer(QMainWindow):
         layout = QVBoxLayout(main_widget)
         layout.setContentsMargins(20, 20, 20, 20)
         
-        # Search bar
         search_layout = QHBoxLayout()
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search for songs, artists...")
@@ -562,14 +513,12 @@ class MusicPlayer(QMainWindow):
         
         layout.addSpacing(20)
         
-        # Current view label
         self.view_label = QLabel("Your Library")
         self.view_label.setStyleSheet("color: #ffffff; font-size: 32px; font-weight: bold;")
         layout.addWidget(self.view_label)
         
         layout.addSpacing(10)
         
-        # Song list with custom styling
         self.song_list = QListWidget()
         self.song_list.setStyleSheet("""
             QListWidget {
@@ -597,12 +546,10 @@ class MusicPlayer(QMainWindow):
         self.song_list.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.song_list.model().rowsMoved.connect(self.on_songs_reordered)
         
-        # Create splitter for song list and lyrics panel
         content_splitter = QSplitter(Qt.Orientation.Horizontal)
         content_splitter.setStyleSheet("QSplitter::handle { background-color: #282828; }")
         content_splitter.addWidget(self.song_list)
         
-        # === LYRICS PANEL ===
         self.lyrics_panel = QTextEdit()
         self.lyrics_panel.setReadOnly(True)
         self.lyrics_panel.setStyleSheet("""
@@ -622,7 +569,7 @@ class MusicPlayer(QMainWindow):
         content_splitter.setStretchFactor(0, 3)
         content_splitter.setStretchFactor(1, 1)
         
-        layout.addWidget(content_splitter, 1)  # Add stretch factor
+        layout.addWidget(content_splitter, 1)
         
         return main_widget
     
@@ -635,10 +582,8 @@ class MusicPlayer(QMainWindow):
         layout = QVBoxLayout(player_widget)
         layout.setContentsMargins(15, 5, 15, 5)
         
-        # Top row: Now playing info, controls, volume
         top_row = QHBoxLayout()
         
-        # === NOW PLAYING INFO ===
         now_playing = QHBoxLayout()
         self.album_art = QLabel()
         self.album_art.setFixedSize(56, 56)
@@ -659,11 +604,9 @@ class MusicPlayer(QMainWindow):
         
         top_row.addLayout(now_playing, 1)
         
-        # === PLAYER CONTROLS ===
         controls = QHBoxLayout()
         controls.setSpacing(15)
         
-        # Control buttons
         self.shuffle_btn = QPushButton(self.icons['shuffle'], "")
         self.prev_btn = QPushButton(self.icons['prev'], "")
         self.play_btn = QPushButton(self.icons['play'], "")
@@ -706,7 +649,6 @@ class MusicPlayer(QMainWindow):
         """)
         self.play_btn.setIconSize(QSize(18, 18))
         
-        # Connect control signals
         self.shuffle_btn.clicked.connect(self.toggle_shuffle)
         self.prev_btn.clicked.connect(self.play_previous)
         self.play_btn.clicked.connect(self.toggle_play)
@@ -715,11 +657,9 @@ class MusicPlayer(QMainWindow):
         
         top_row.addLayout(controls, 1)
         
-        # === VOLUME CONTROL & LYRICS TOGGLE ===
         volume_layout = QHBoxLayout()
         volume_layout.addStretch()
         
-        # Lyrics toggle button
         self.lyrics_btn = QPushButton(self.icons['microphone'], "")
         self.lyrics_btn.setFixedSize(32, 32)
         self.lyrics_btn.setIconSize(QSize(18, 18))
@@ -779,7 +719,6 @@ class MusicPlayer(QMainWindow):
         top_row.addLayout(volume_layout, 1)
         layout.addLayout(top_row)
         
-        # === PROGRESS BAR ===
         progress_layout = QHBoxLayout()
         
         self.time_label = QLabel("0:00")
@@ -855,13 +794,11 @@ class MusicPlayer(QMainWindow):
                               f"Could not find folder: {self.music_folder}")
             return
         
-        # Scan for MP3 files
         for file in self.music_folder.glob("*.mp3"):
             try:
                 audio = MP3(file)
                 duration = int(audio.info.length)
                 
-                # Try to get metadata
                 title = file.stem
                 artist = "Unknown Artist"
                 album = "Unknown Album"
@@ -871,7 +808,6 @@ class MusicPlayer(QMainWindow):
                     artist = str(audio.tags.get("TPE1", artist))
                     album = str(audio.tags.get("TALB", album))
                 
-                # Extract album art
                 album_art_data = None
                 try:
                     if audio.tags:
@@ -896,7 +832,6 @@ class MusicPlayer(QMainWindow):
                 print(f"Error loading {file.name}: {e}")
         
         self.all_songs.sort(key=lambda x: x["title"])
-        # Don't auto-display here - let main init handle it
     
     def load_spotify_playlist(self):
         """Load the Spotify playlist from CSV and match with local files"""
@@ -905,7 +840,6 @@ class MusicPlayer(QMainWindow):
         if not csv_path.exists():
             return
         
-        # Check if already loaded
         if "Anime Openings (Spotify)" in self.playlists:
             return
         
@@ -914,12 +848,10 @@ class MusicPlayer(QMainWindow):
                 reader = csv.DictReader(f)
                 spotify_tracks = list(reader)
             
-            # Create lookup by path for fast duplicate checking
             matched_paths = set()
             matched_songs = []
             unmatched_tracks = []
             
-            # Manual mappings for files with missing metadata or romanization issues
             manual_mappings = {
                 "境界線": "86 EIGHTY-SIX - Opening 2 ｜ Kyoukaisen [0U6JUTWas8c].mp3",
                 "太陽が昇らない世界 - A World Where the Sun Never Rises": "Aimer「太陽が昇らない世界」Music Video（『劇場版「鬼滅の刃」無限城編 』第一章 猗窩座再来』 主題歌） [DJOf0XtVpkI].mp3"
@@ -930,7 +862,6 @@ class MusicPlayer(QMainWindow):
                 artist_name = track.get("Artist Name(s)", "")
                 album_name = track.get("Album Name", "")
                 
-                # Check manual mappings first
                 if track_name in manual_mappings:
                     target_filename = manual_mappings[track_name]
                     for song in self.all_songs:
@@ -941,30 +872,23 @@ class MusicPlayer(QMainWindow):
                             break
                     continue
                 
-                # Try to find best match with local files
                 best_match = None
                 best_score = 0
                 
                 for song in self.all_songs:
-                    # Skip if already matched
                     if song["path"] in matched_paths:
                         continue
                     
-                    # Calculate match score with multiple strategies
                     score = 0
                     
-                    # Clean up track name - handle both ASCII and fullwidth characters
                     track_lower = track_name.lower()
-                    # Remove special characters (both ASCII and fullwidth versions)
                     for char in ['-', '_', '(', ')', '[', ']', '.mp3', ',', '|', ':', '!', '?', '"', "'", 
                                 '＂', '（', '）', '｜', '：', '！', '？', '～', '〜', '/', '＃']:
                         track_lower = track_lower.replace(char, ' ')
                     track_words = set(track_lower.split())
                     
-                    # Check if metadata exists (for files with missing ID3 tags)
                     has_metadata = bool(song["title"].strip() and song["artist"].strip())
                     
-                    # Strategy 1: Title match from metadata (HIGHEST PRIORITY when available)
                     title_lower = song["title"].lower()
                     for char in ['-', '_', '(', ')', '[', ']', ',', '|', ':', '!', '?', '"', "'",
                                 '＂', '（', '）', '｜', '：', '！', '？', '～', '〜', '/', '＃']:
@@ -975,11 +899,9 @@ class MusicPlayer(QMainWindow):
                         title_overlap = len(track_words & title_words) / len(track_words)
                         score += title_overlap * 15
                         
-                        # Bonus for very close matches
                         if title_overlap > 0.8:
                             score += 5
                     
-                    # Strategy 2: Filename match (CRITICAL for files without metadata)
                     filename_lower = song["filename"].lower()
                     for char in ['-', '_', '(', ')', '[', ']', '.mp3', ',', '|', ':', '!', '?', '"', "'",
                                 '＂', '（', '）', '｜', '：', '！', '？', '～', '〜', '/', '＃']:
@@ -988,16 +910,13 @@ class MusicPlayer(QMainWindow):
                     filename_words = set(filename_lower.split())
                     if track_words and filename_words:
                         word_overlap = len(track_words & filename_words) / len(track_words)
-                        # Give MUCH higher weight to filename if no metadata
                         filename_weight = 20 if not has_metadata else 8
                         score += word_overlap * filename_weight
                     
-                    # Strategy 3: Artist match (only if metadata exists)
                     if has_metadata:
                         artist_lower = song["artist"].lower()
                         csv_artist_lower = artist_name.lower()
                         
-                        # Handle multiple artists (separated by ; or ,)
                         csv_artists = [a.strip() for a in csv_artist_lower.replace(';', ',').split(',')]
                         
                         for csv_artist in csv_artists:
@@ -1006,16 +925,13 @@ class MusicPlayer(QMainWindow):
                                     score += 5
                                     break
                     
-                    # Strategy 4: Album match bonus (only if metadata exists)
                     if has_metadata:
                         album_lower = song["album"].lower()
                         if album_name and len(album_name) > 3:
                             if album_name.lower() in album_lower or album_lower in album_name.lower():
                                 score += 3
                     
-                    # Strategy 5: Check if track name is substring (good for files without metadata)
                     if len(track_lower) > 5:
-                        # For files without metadata, check filename more thoroughly
                         check_target = filename_lower if not has_metadata else filename_lower
                         if track_lower in check_target:
                             substring_bonus = 8 if not has_metadata else 3
@@ -1025,18 +941,15 @@ class MusicPlayer(QMainWindow):
                         best_score = score
                         best_match = song
                 
-                # Add if we found a reasonable match
-                if best_match and best_score >= 8:  # High confidence match
+                if best_match and best_score >= 8:
                     matched_paths.add(best_match["path"])
                     matched_songs.append(best_match)
-                elif best_match and best_score >= 3.5:  # Medium confidence - check more carefully
-                    # For lower scores, require either good title match OR artist match
+                elif best_match and best_score >= 3.5:
                     track_lower = track_name.lower()
                     title_lower = best_match["title"].lower()
                     artist_lower = best_match["artist"].lower()
                     csv_artist_lower = artist_name.lower()
                     
-                    # Clean for comparison
                     for char in ['-', '_', '(', ')', '[', ']', ',', '|', ':', '!', '?', '.']:
                         track_lower = track_lower.replace(char, ' ')
                         title_lower = title_lower.replace(char, ' ')
@@ -1044,16 +957,14 @@ class MusicPlayer(QMainWindow):
                     track_words = set(track_lower.split())
                     title_words = set(title_lower.split())
                     
-                    # Accept if at least 50% of track words are in title
                     if track_words and title_words:
                         overlap = len(track_words & title_words) / len(track_words)
-                        if overlap >= 0.5:  # 50% word overlap
+                        if overlap >= 0.5:
                             matched_paths.add(best_match["path"])
                             matched_songs.append(best_match)
                             print(f"✓ Medium match: '{track_name}' -> '{best_match['title']}' (score: {best_score:.1f})")
                             continue
                     
-                    # Or if artist matches well
                     csv_artists = [a.strip() for a in csv_artist_lower.replace(';', ',').split(',')]
                     for csv_artist in csv_artists:
                         if len(csv_artist) > 2 and csv_artist in artist_lower:
@@ -1062,7 +973,6 @@ class MusicPlayer(QMainWindow):
                             print(f"✓ Artist match: '{track_name}' by '{artist_name}' -> '{best_match['filename']}' (score: {best_score:.1f})")
                             break
                     else:
-                        # Didn't match, add to unmatched
                         unmatched_tracks.append({
                             "track": track_name,
                             "artist": artist_name,
@@ -1071,7 +981,6 @@ class MusicPlayer(QMainWindow):
                             "best_match_title": best_match["title"] if best_match else "None"
                         })
                 else:
-                    # Track unmatched for reporting
                     unmatched_tracks.append({
                         "track": track_name,
                         "artist": artist_name,
@@ -1080,7 +989,6 @@ class MusicPlayer(QMainWindow):
                         "best_match_title": best_match["title"] if best_match else "None"
                     })
             
-            # Show unmatched tracks
             if unmatched_tracks:
                 print("\n=== UNMATCHED TRACKS ===")
                 for um in unmatched_tracks:
@@ -1088,7 +996,6 @@ class MusicPlayer(QMainWindow):
                     print(f"   Best: {um['best_match']} | Title: {um['best_match_title']} (score: {um['best_score']:.1f})")
                 print("========================\n")
             
-            # Add to playlists
             if matched_songs:
                 self.playlists["Anime Openings (Spotify)"] = {
                     "songs": matched_songs,
@@ -1097,7 +1004,6 @@ class MusicPlayer(QMainWindow):
                 }
                 self.save_playlists()
                 
-                # Show summary
                 unmatched = len(spotify_tracks) - len(matched_songs)
                 unused_local = len(self.all_songs) - len(matched_paths)
                 
@@ -1125,15 +1031,12 @@ class MusicPlayer(QMainWindow):
             with open(self.playlists_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             
-            # Create a lookup dictionary for faster matching
             songs_by_path = {song["path"]: song for song in self.all_songs}
             
-            # Reconstruct playlists with actual song objects
             for name, playlist_data in data.items():
                 song_paths = playlist_data.get("song_paths", [])
                 songs = []
                 
-                # Match paths to loaded songs - PRESERVE ORDER
                 for path in song_paths:
                     if path in songs_by_path:
                         songs.append(songs_by_path[path])
@@ -1152,7 +1055,6 @@ class MusicPlayer(QMainWindow):
         try:
             data = {}
             for name, playlist in self.playlists.items():
-                # Save only song paths (lightweight)
                 data[name] = {
                     "song_paths": [song["path"] for song in playlist["songs"]],
                     "created": playlist.get("created", "unknown"),
@@ -1200,7 +1102,6 @@ class MusicPlayer(QMainWindow):
         folder_path = Path(folder)
         folder_name = folder_path.name
         
-        # Ask for playlist name
         name, ok = QInputDialog.getText(self, "Import Playlist", 
                                        "Playlist name:", text=folder_name)
         
@@ -1214,7 +1115,6 @@ class MusicPlayer(QMainWindow):
             if reply == QMessageBox.StandardButton.No:
                 return
         
-        # Scan folder for MP3 files
         songs = []
         mp3_files = list(folder_path.glob("*.mp3"))
         
@@ -1232,7 +1132,6 @@ class MusicPlayer(QMainWindow):
                     artist = str(audio.tags.get("TPE1", artist))
                     album = str(audio.tags.get("TALB", album))
                 
-                # Extract album art
                 album_art_data = None
                 try:
                     if audio.tags:
@@ -1260,15 +1159,12 @@ class MusicPlayer(QMainWindow):
             QMessageBox.warning(self, "No Songs Found", "No MP3 files found in the selected folder.")
             return
         
-        # Sort by filename
         songs.sort(key=lambda x: x["filename"])
         
-        # Add to library if not already there
         for song in songs:
             if song["path"] not in [s["path"] for s in self.all_songs]:
                 self.all_songs.append(song)
         
-        # Create playlist
         self.playlists[name] = {
             "songs": songs,
             "created": "imported",
@@ -1282,26 +1178,22 @@ class MusicPlayer(QMainWindow):
     
     def import_from_spotify(self):
         """Import songs from Spotify URL using spotdl"""
-        # Ask for Spotify URL
         url, ok = QInputDialog.getText(self, "Import from Spotify", 
                                        "Enter Spotify URL (song, album, or playlist):")
         
         if not ok or not url:
             return
         
-        # Validate URL
         if not ("spotify.com" in url or "spotify:" in url):
             QMessageBox.warning(self, "Invalid URL", "Please enter a valid Spotify URL.")
             return
         
-        # Ask for playlist name
         name, ok = QInputDialog.getText(self, "Playlist Name", 
                                        "Enter name for the playlist:")
         
         if not ok or not name:
             return
         
-        # Check if spotdl is installed
         try:
             subprocess.run(["spotdl", "--version"], capture_output=True, check=True)
         except (subprocess.CalledProcessError, FileNotFoundError):
@@ -1310,8 +1202,7 @@ class MusicPlayer(QMainWindow):
                                         "This will run: pip install spotdl",
                                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
             if reply == QMessageBox.StandardButton.Yes:
-                # Create install dialog
-                install_dialog = DownloadDialog(None)  # No parent = separate window
+                install_dialog = DownloadDialog(None)
                 install_dialog.setWindowTitle("Installing spotdl")
                 install_dialog.set_status("Installing spotdl...")
                 install_dialog.show()
@@ -1348,7 +1239,6 @@ class MusicPlayer(QMainWindow):
                 
                 result = install_dialog.exec()
                 
-                # Verify installation
                 try:
                     subprocess.run(["spotdl", "--version"], capture_output=True, check=True)
                 except:
@@ -1358,20 +1248,16 @@ class MusicPlayer(QMainWindow):
             else:
                 return
         
-        # Create download directory
         download_dir = self.music_folder / name
         download_dir.mkdir(exist_ok=True)
         
-        # Create download dialog (no parent = separate window)
         dialog = DownloadDialog(None)
         dialog.show()
         
-        # Create worker and thread
         worker = DownloadWorker(url, download_dir)
         thread = QThread()
         worker.moveToThread(thread)
         
-        # Store references to prevent garbage collection
         download_data = {
             'worker': worker,
             'thread': thread,
@@ -1380,7 +1266,6 @@ class MusicPlayer(QMainWindow):
         }
         self.active_downloads.append(download_data)
         
-        # Connect signals
         worker.output.connect(dialog.append_output)
         worker.status.connect(dialog.set_status)
         worker.progress.connect(lambda min_v, max_v: dialog.set_progress_range(min_v, max_v))
@@ -1389,12 +1274,10 @@ class MusicPlayer(QMainWindow):
             if success:
                 dialog.set_status(f"✓ Complete! Imported {len(songs)} songs")
                 
-                # Add to global library
                 for song in songs:
                     if song["path"] not in [s["path"] for s in self.all_songs]:
                         self.all_songs.append(song)
                 
-                # Create playlist
                 self.playlists[name] = {
                     "songs": songs,
                     "created": "imported",
@@ -1410,18 +1293,15 @@ class MusicPlayer(QMainWindow):
                 QMessageBox.critical(None, "Download Failed", 
                                    f"Failed to download from Spotify:\n\n{error_msg}")
             
-            # Clean up after completion
             dialog.enable_close()
             thread.quit()
             thread.wait()
             
-            # Remove from active downloads
             self.active_downloads = [d for d in self.active_downloads if d['thread'] != thread]
         
         worker.finished.connect(on_finished)
         thread.started.connect(worker.run)
         
-        # Start download
         thread.start()
     
     def playlist_drag_enter(self, event):
@@ -1434,21 +1314,18 @@ class MusicPlayer(QMainWindow):
         if not event.mimeData().hasFormat("application/x-song-index"):
             return
         
-        # Get the playlist item at drop position
         item = self.playlist_list.itemAt(event.position().toPoint())
         if not item:
             return
         
         playlist_name = item.text()
         
-        # Get the song index being dragged
         song_index = int(event.mimeData().data("application/x-song-index").data().decode())
         if song_index < 0 or song_index >= len(self.current_playlist):
             return
         
         song = self.current_playlist[song_index]
         
-        # Add to target playlist
         self.add_song_to_playlist(playlist_name, song)
         event.acceptProposedAction()
     
@@ -1460,11 +1337,9 @@ class MusicPlayer(QMainWindow):
         playlist = self.playlists[self.current_playlist_name]
         if playlist.get("persistent", False):
             QMessageBox.warning(self, "Cannot Reorder", "This is a persistent playlist and cannot be reordered.")
-            # Refresh to undo the move
             self.display_songs(playlist["songs"])
             return
         
-        # Rebuild the playlist order based on current list widget order
         new_order = []
         for i in range(self.song_list.count()):
             item = self.song_list.item(i)
@@ -1472,12 +1347,10 @@ class MusicPlayer(QMainWindow):
             if original_index < len(self.current_playlist):
                 new_order.append(self.current_playlist[original_index])
         
-        # Update playlist
         playlist["songs"] = new_order
         self.current_playlist = new_order
         self.save_playlists()
         
-        # Update indices in list items
         for i in range(self.song_list.count()):
             item = self.song_list.item(i)
             item.setData(Qt.ItemDataRole.UserRole, i)
@@ -1506,7 +1379,6 @@ class MusicPlayer(QMainWindow):
             }
         """)
         
-        # Only allow deletion of non-persistent playlists
         if not self.playlists[playlist_name].get("persistent", False):
             delete_action = QAction("Delete Playlist", self)
             delete_action.triggered.connect(lambda: self.delete_playlist(playlist_name))
@@ -1529,7 +1401,6 @@ class MusicPlayer(QMainWindow):
             self.save_playlists()
             self.refresh_playlist_sidebar()
             
-            # If currently viewing, switch to library
             if self.current_playlist_name == name:
                 self.view_label.setText("Your Library")
                 self.display_songs(self.all_songs)
@@ -1545,12 +1416,10 @@ class MusicPlayer(QMainWindow):
                                    f"A playlist named '{new_name}' already exists.")
                 return
             
-            # Rename
             self.playlists[new_name] = self.playlists.pop(old_name)
             self.save_playlists()
             self.refresh_playlist_sidebar()
             
-            # Update current view if needed
             if self.current_playlist_name == old_name:
                 self.current_playlist_name = new_name
                 self.view_label.setText(new_name)
@@ -1599,7 +1468,6 @@ class MusicPlayer(QMainWindow):
         
         menu.addSeparator()
         
-        # Add to playlist submenu
         add_to_menu = QMenu("Add to Playlist", self)
         add_to_menu.setStyleSheet(menu.styleSheet())
         
@@ -1610,7 +1478,6 @@ class MusicPlayer(QMainWindow):
         
         menu.addMenu(add_to_menu)
         
-        # Remove from playlist if in a user playlist
         if self.current_playlist_name and self.current_playlist_name in self.playlists:
             if not self.playlists[self.current_playlist_name].get("persistent", False):
                 menu.addSeparator()
@@ -1620,7 +1487,6 @@ class MusicPlayer(QMainWindow):
         
         menu.addSeparator()
         
-        # Show file info
         info_action = QAction("Song Info", self)
         info_action.triggered.connect(lambda: self.show_song_info(song))
         menu.addAction(info_action)
@@ -1675,7 +1541,6 @@ class MusicPlayer(QMainWindow):
         playlist["songs"].remove(song)
         self.save_playlists()
         
-        # Refresh view
         self.display_songs(playlist["songs"])
         self.current_playlist_name = self.current_playlist_name
     
@@ -1684,19 +1549,16 @@ class MusicPlayer(QMainWindow):
         str1 = str1.lower().strip()
         str2 = str2.lower().strip()
         
-        # Remove common characters
         for char in ['-', '_', '(', ')', '[', ']', '.mp3', ',']:
             str1 = str1.replace(char, ' ')
             str2 = str2.replace(char, ' ')
         
-        # Check if most words match
         words1 = set(str1.split())
         words2 = set(str2.split())
         
         if not words1 or not words2:
             return False
         
-        # If at least 60% of words match
         matches = len(words1.intersection(words2))
         return matches / max(len(words1), len(words2)) > 0.4
     
@@ -1708,13 +1570,11 @@ class MusicPlayer(QMainWindow):
         for i, song in enumerate(songs):
             item = QListWidgetItem()
             
-            # Create custom widget for song item
             widget = QWidget()
             layout = QHBoxLayout(widget)
             layout.setContentsMargins(8, 8, 8, 8)
             layout.setSpacing(12)
             
-            # Album art thumbnail
             art_label = QLabel()
             art_label.setFixedSize(48, 48)
             
@@ -1724,16 +1584,13 @@ class MusicPlayer(QMainWindow):
                 art_label.setPixmap(pixmap.scaled(48, 48, Qt.AspectRatioMode.KeepAspectRatio, 
                                                   Qt.TransformationMode.SmoothTransformation))
             else:
-                # Default album art
                 art_label.setStyleSheet("background-color: #282828; border-radius: 4px;")
             
             layout.addWidget(art_label)
             
-            # Track info
             info_layout = QVBoxLayout()
             info_layout.setSpacing(2)
             
-            # Track number and title
             title_layout = QHBoxLayout()
             title_layout.setSpacing(8)
             
@@ -1748,14 +1605,12 @@ class MusicPlayer(QMainWindow):
             
             info_layout.addLayout(title_layout)
             
-            # Artist and duration
             subtitle_label = QLabel(f"{song['artist']}  •  {self.format_time(song['duration'])}")
             subtitle_label.setStyleSheet("color: #b3b3b3; font-size: 12px;")
             info_layout.addWidget(subtitle_label)
             
             layout.addLayout(info_layout, 1)
             
-            # Set widget
             item.setSizeHint(widget.sizeHint())
             item.setData(Qt.ItemDataRole.UserRole, i)
             
@@ -1773,17 +1628,14 @@ class MusicPlayer(QMainWindow):
             self.current_index = index
             song = self.current_playlist[index]
             
-            # Load and play
             self.player.setSource(QUrl.fromLocalFile(song["path"]))
             self.player.play()
             self.is_playing = True
             self.play_btn.setIcon(self.icons['pause'])
             
-            # Update UI
             self.track_title.setText(song["title"])
             self.track_artist.setText(song["artist"])
             
-            # Update album art in player
             if song.get("album_art"):
                 pixmap = QPixmap()
                 pixmap.loadFromData(song["album_art"])
@@ -1793,15 +1645,12 @@ class MusicPlayer(QMainWindow):
                 self.album_art.clear()
                 self.album_art.setStyleSheet("background-color: #282828; border-radius: 4px;")
             
-            # Load lyrics
             self.load_lyrics(song["path"])
             
-            # Add to history
             self.play_history.append(index)
             if len(self.play_history) > 50:
                 self.play_history.pop(0)
             
-            # Highlight in list
             if 0 <= index < self.song_list.count():
                 self.song_list.setCurrentRow(index)
     
@@ -1824,15 +1673,12 @@ class MusicPlayer(QMainWindow):
             return
         
         if self.queue:
-            # Play from queue
             next_index = self.queue.pop(0)
             self.play_song(next_index)
         elif self.is_shuffle:
-            # Random song
             next_index = random.randint(0, len(self.current_playlist) - 1)
             self.play_song(next_index)
         else:
-            # Next in order
             next_index = (self.current_index + 1) % len(self.current_playlist)
             self.play_song(next_index)
     
@@ -1842,13 +1688,11 @@ class MusicPlayer(QMainWindow):
             return
         
         if self.is_shuffle and len(self.play_history) > 1:
-            # Go back in history
-            self.play_history.pop()  # Remove current
+            self.play_history.pop()
             prev_index = self.play_history[-1]
-            self.play_history.pop()  # Will be re-added in play_song
+            self.play_history.pop()
             self.play_song(prev_index)
         else:
-            # Previous in order
             prev_index = (self.current_index - 1) % len(self.current_playlist)
             self.play_song(prev_index)
     
@@ -1898,9 +1742,7 @@ class MusicPlayer(QMainWindow):
         self.lyrics_visible = not self.lyrics_visible
         self.lyrics_panel.setVisible(self.lyrics_visible)
         
-        # Update button style and icon
         if self.lyrics_visible:
-            # Create green icon for active state
             microphone_svg = '''<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>'''
             self.lyrics_btn.setIcon(self.svg_to_icon(microphone_svg, 18, "#1DB954"))
             self.lyrics_btn.setStyleSheet("""
@@ -1914,7 +1756,6 @@ class MusicPlayer(QMainWindow):
                 }
             """)
         else:
-            # Reset to default gray icon
             self.lyrics_btn.setIcon(self.icons['microphone'])
             self.lyrics_btn.setStyleSheet("""
                 QPushButton {
@@ -1935,7 +1776,6 @@ class MusicPlayer(QMainWindow):
     def update_repeat_button(self):
         """Update repeat button icon and appearance"""
         if self.repeat_mode == 0:
-            # No repeat
             self.repeat_btn.setIcon(self.icons['repeat'])
             self.repeat_btn.setStyleSheet("""
                 QPushButton {
@@ -1953,7 +1793,6 @@ class MusicPlayer(QMainWindow):
                 }
             """)
         elif self.repeat_mode == 1:
-            # Repeat all
             self.repeat_btn.setIcon(self.icons['repeat'])
             self.repeat_btn.setStyleSheet("""
                 QPushButton {
@@ -1967,7 +1806,6 @@ class MusicPlayer(QMainWindow):
                 }
             """)
         else:
-            # Repeat one
             self.repeat_btn.setIcon(self.icons['repeat_one'])
             self.repeat_btn.setStyleSheet("""
                 QPushButton {
@@ -1985,16 +1823,12 @@ class MusicPlayer(QMainWindow):
         """Handle when media finishes"""
         if status == QMediaPlayer.MediaStatus.EndOfMedia:
             if self.repeat_mode == 2:
-                # Repeat one
                 self.play_song(self.current_index)
             elif self.repeat_mode == 1 or self.is_shuffle:
-                # Repeat all or shuffle
                 self.play_next()
             elif self.current_index < len(self.current_playlist) - 1:
-                # Play next
                 self.play_next()
             else:
-                # End of playlist
                 self.is_playing = False
                 self.play_btn.setIcon(self.icons['play'])
     
@@ -2017,7 +1851,6 @@ class MusicPlayer(QMainWindow):
         """Handle volume change"""
         volume = value / 100.0
         self.audio_output.setVolume(volume)
-        # Save immediately so we don't lose it
         self.save_settings()
     
     def load_lyrics(self, file_path):
@@ -2027,7 +1860,6 @@ class MusicPlayer(QMainWindow):
             self.current_lyric_index = -1
             lyrics = ""
             
-            # First, check for external LRC file
             lrc_path = Path(file_path).with_suffix('.lrc')
             if lrc_path.exists():
                 print(f"Found LRC file: {lrc_path}")
@@ -2037,21 +1869,17 @@ class MusicPlayer(QMainWindow):
                     self.display_synced_lyrics()
                     return
             
-            # Try to get lyrics from MP3 tags
             audio = MP3(file_path)
             if hasattr(audio, 'tags') and audio.tags:
-                # Check for USLT (Unsynchronised lyrics/text transcription)
                 uslt_frames = audio.tags.getall('USLT')
                 if uslt_frames:
                     lyrics = uslt_frames[0].text
-                    # Check if it's LRC format
                     if '[' in lyrics and ']' in lyrics and ':' in lyrics:
                         if self.parse_lrc(lyrics):
                             print(f"Parsed {len(self.synced_lyrics)} synced lyrics from USLT tags")
                             self.display_synced_lyrics()
                             return
                 
-                # Check for non-standard lyrics tags (lyrics-XXX, LYRICS, etc.)
                 if not lyrics:
                     for key in audio.tags.keys():
                         if 'lyric' in key.lower():
@@ -2064,11 +1892,9 @@ class MusicPlayer(QMainWindow):
                             except:
                                 pass
                 
-                # Check for SYLT (Synchronised lyrics/text)
                 if not lyrics:
                     sylt_frames = audio.tags.getall('SYLT')
                     if sylt_frames:
-                        # SYLT contains (text, timestamp) tuples
                         for text, timestamp in sylt_frames[0].text:
                             self.synced_lyrics.append((timestamp, text))
                         if self.synced_lyrics:
@@ -2076,10 +1902,8 @@ class MusicPlayer(QMainWindow):
                             self.display_synced_lyrics()
                             return
             
-            # Display unsynced lyrics
             if lyrics:
                 self.current_lyrics = lyrics
-                # Format the lyrics nicely
                 formatted_lyrics = lyrics.replace('\n\n', '<br><br>').replace('\n', '<br>')
                 self.lyrics_panel.setHtml(f'<div style="text-align: center; color: #b3b3b3; line-height: 1.8;">{formatted_lyrics}<br><br><span style="color: #666666; font-size: 12px; font-style: italic;">Add a .lrc file with the same name for synced lyrics</span></div>')
                 print("Displaying unsynced lyrics")
@@ -2100,7 +1924,6 @@ class MusicPlayer(QMainWindow):
         import re
         self.synced_lyrics = []
         
-        # LRC format: [mm:ss.xx]lyric text
         pattern = r'\[(\d+):(\d+\.?\d*)\](.*)'
         
         for line in lrc_text.split('\n'):
@@ -2110,10 +1933,9 @@ class MusicPlayer(QMainWindow):
                 seconds = float(match.group(2))
                 text = match.group(3).strip()
                 timestamp_ms = int((minutes * 60 + seconds) * 1000)
-                if text:  # Only add non-empty lines
+                if text:
                     self.synced_lyrics.append((timestamp_ms, text))
         
-        # Sort by timestamp
         self.synced_lyrics.sort(key=lambda x: x[0])
         return len(self.synced_lyrics) > 0
     
@@ -2134,7 +1956,6 @@ class MusicPlayer(QMainWindow):
         if not self.synced_lyrics or not self.lyrics_visible:
             return
         
-        # Find current lyric index
         current_index = -1
         for i, (timestamp, _) in enumerate(self.synced_lyrics):
             if timestamp <= position_ms:
@@ -2142,31 +1963,24 @@ class MusicPlayer(QMainWindow):
             else:
                 break
         
-        # Update highlight if changed
         if current_index != self.current_lyric_index and current_index >= 0:
             self.current_lyric_index = current_index
             print(f"Highlighting lyric {current_index} at {position_ms}ms")
             
-            # Rebuild HTML with current line highlighted
             html = '<div style="text-align: center; line-height: 2.5;">\n'
             for i, (_, text) in enumerate(self.synced_lyrics):
                 if i == current_index:
-                    # Highlight current line
                     html += f'<p id="lyric_{i}" style="color: #ffffff; font-weight: bold; font-size: 17px; margin: 10px 0; text-shadow: 0 0 10px rgba(29, 185, 84, 0.5);">{text}</p>\n'
                 elif abs(i - current_index) <= 1:
-                    # Slightly brighter for adjacent lines
                     html += f'<p id="lyric_{i}" style="color: #999999; margin: 10px 0; font-size: 15px;">{text}</p>\n'
                 else:
-                    # Dimmed for other lines
                     html += f'<p id="lyric_{i}" style="color: #666666; margin: 10px 0; font-size: 15px;">{text}</p>\n'
             html += '</div>'
             
             self.lyrics_panel.setHtml(html)
             
-            # Auto-scroll to current line (approximate)
             if current_index > 2:
                 cursor = self.lyrics_panel.textCursor()
-                # Scroll to keep current line roughly centered
                 scroll_position = int((current_index / len(self.synced_lyrics)) * self.lyrics_panel.verticalScrollBar().maximum())
                 self.lyrics_panel.verticalScrollBar().setValue(scroll_position)
     
@@ -2201,7 +2015,6 @@ class MusicPlayer(QMainWindow):
         elif view == "home":
             self.current_playlist_name = None
             self.view_label.setText("Home")
-            # Could show recommendations, recently played, etc.
         elif view == "search":
             self.search_input.setFocus()
     
@@ -2213,7 +2026,6 @@ class MusicPlayer(QMainWindow):
     
     def update_ui(self):
         """Periodic UI updates"""
-        # Update lyrics highlight if synced lyrics are available
         if self.synced_lyrics and self.is_playing:
             position_ms = self.player.position()
             self.update_lyrics_highlight(position_ms)
@@ -2224,16 +2036,12 @@ class MusicPlayer(QMainWindow):
             try:
                 with open(self.settings_file, 'r') as f:
                     settings = json.load(f)
-                    # Restore volume
                     volume = settings.get('volume', 0.7)
                     self.audio_output.setVolume(volume)
-                    # Update slider to match (convert 0.0-1.0 to 0-100)
                     self.volume_slider.setValue(int(volume * 100))
-                    # Restore window position and size
                     if 'window_geometry' in settings:
                         geom = settings['window_geometry']
                         self.setGeometry(geom['x'], geom['y'], geom['width'], geom['height'])
-                    # Restore shuffle and repeat
                     self.is_shuffle = settings.get('shuffle', False)
                     self.repeat_mode = settings.get('repeat_mode', 0)
             except:
@@ -2261,20 +2069,16 @@ class MusicPlayer(QMainWindow):
         self.save_settings()
         self.save_playlists()
         
-        # Clean up active downloads
         for download_data in self.active_downloads:
             thread = download_data['thread']
             worker = download_data['worker']
             dialog = download_data['dialog']
             
-            # Stop worker
             worker.stop()
             
-            # Quit thread and wait
             thread.quit()
-            thread.wait(2000)  # Wait max 2 seconds
+            thread.wait(2000)
             
-            # Close dialog
             dialog.close()
         
         event.accept()
@@ -2284,7 +2088,6 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("LocalStream")
     
-    # Set application font
     font = QFont("Segoe UI", 10)
     app.setFont(font)
     
