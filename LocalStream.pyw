@@ -112,22 +112,57 @@ class DownloadWorker(QObject):
             self.output.emit(f"Spotify URL: {self.url}\n")
             self.output.emit("-" * 60 + "\n\n")
             
-            process = subprocess.Popen([
+            existing_files = set(Path(self.download_dir).glob("*.mp3"))
+            
+            cmd = [
+                sys.executable,
+                "-m",
                 "spotdl",
                 "download",
                 self.url,
                 "--output", str(self.download_dir),
                 "--format", "mp3",
                 "--bitrate", "320k",
-                "--audio", "youtube"
-            ], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
-               text=True, bufsize=1, universal_newlines=True)
+                "--print-errors",
+                "--simple-tui"
+            ]
             
-            for line in process.stdout:
+            self.output.emit(f"Running: {' '.join(cmd)}\n\n")
+            
+            import os
+            env = os.environ.copy()
+            env['PYTHONUNBUFFERED'] = '1'
+            
+            creation_flags = 0
+            if sys.platform == 'win32':
+                creation_flags = 0x08000000 
+            
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                text=True,
+                bufsize=0,
+                universal_newlines=True,
+                env=env,
+                creationflags=creation_flags
+            )
+            
+            import time
+            while True:
+                line = process.stdout.readline()
+                if not line:
+                    if process.poll() is not None:
+                        break
+                    time.sleep(0.1)
+                    continue
+                    
                 if self.should_stop:
                     process.terminate()
                     self.finished.emit(False, "Cancelled by user", [])
                     return
+                    
                 self.output.emit(line.rstrip())
             
             process.wait()
@@ -139,7 +174,9 @@ class DownloadWorker(QObject):
                 self.output.emit("Loading song metadata...\n\n")
                 
                 songs = []
-                mp3_files = list(Path(self.download_dir).glob("*.mp3"))
+                all_mp3_files = set(Path(self.download_dir).glob("*.mp3"))
+                mp3_files = list(all_mp3_files - existing_files)
+                mp3_files = list(all_mp3_files - existing_files)
                 
                 for i, file in enumerate(mp3_files):
                     try:
@@ -1229,7 +1266,7 @@ class MusicPlayer(QMainWindow):
             return
         
         try:
-            subprocess.run(["spotdl", "--version"], capture_output=True, check=True)
+            subprocess.run([sys.executable, "-m", "spotdl", "--version"], capture_output=True, check=True)
         except (subprocess.CalledProcessError, FileNotFoundError):
             reply = QMessageBox.question(self, "spotdl Not Found", 
                                         "spotdl is not installed. Install it now?\n\n"
@@ -1274,7 +1311,7 @@ class MusicPlayer(QMainWindow):
                 result = install_dialog.exec()
                 
                 try:
-                    subprocess.run(["spotdl", "--version"], capture_output=True, check=True)
+                    subprocess.run([sys.executable, "-m", "spotdl", "--version"], capture_output=True, check=True)
                 except:
                     QMessageBox.critical(self, "Installation Failed", 
                                        "spotdl installation failed. Please install manually.")
@@ -1322,6 +1359,144 @@ class MusicPlayer(QMainWindow):
                 
                 QMessageBox.information(None, "Import Complete", 
                                       f"Downloaded and imported {len(songs)} songs into playlist '{name}'!")
+            else:
+                dialog.set_status(f"✗ Failed: {error_msg}")
+                QMessageBox.critical(None, "Download Failed", 
+                                   f"Failed to download from Spotify:\n\n{error_msg}")
+            
+            dialog.enable_close()
+            thread.quit()
+            thread.wait()
+            
+            self.active_downloads = [d for d in self.active_downloads if d['thread'] != thread]
+        
+        worker.finished.connect(on_finished)
+        thread.started.connect(worker.run)
+        
+        thread.start()
+    
+    def import_spotify_to_playlist(self, playlist_name):
+        """Import songs from Spotify URL into an existing playlist"""
+        url, ok = QInputDialog.getText(self, "Import from Spotify", 
+                                       f"Enter Spotify URL to add to '{playlist_name}':")
+        
+        if not ok or not url:
+            return
+        
+        if not ("spotify.com" in url or "spotify:" in url):
+            QMessageBox.warning(self, "Invalid URL", "Please enter a valid Spotify URL.")
+            return
+        
+        try:
+            subprocess.run([sys.executable, "-m", "spotdl", "--version"], capture_output=True, check=True)
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            QMessageBox.critical(self, "spotdl Not Found", 
+                               "spotdl is not installed. Please use the main 'Import from Spotify' option first to install it.")
+            return
+        
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "list", "--outdated", "--format=json"],
+                capture_output=True, text=True, check=True, timeout=10
+            )
+            outdated = json.loads(result.stdout)
+            spotdl_outdated = any(pkg["name"].lower() == "spotdl" for pkg in outdated)
+            
+            if spotdl_outdated:
+                update_dialog = DownloadDialog(None)
+                update_dialog.setWindowTitle("Updating spotdl")
+                update_dialog.set_status("Updating spotdl to latest version...")
+                update_dialog.show()
+                
+                def update_thread():
+                    try:
+                        update_dialog.append_output("spotdl update available, upgrading...\n\n")
+                        
+                        creation_flags = 0
+                        if sys.platform == 'win32':
+                            creation_flags = 0x08000000
+                        
+                        process = subprocess.Popen(
+                            [sys.executable, "-m", "pip", "install", "--upgrade", "spotdl"],
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True, bufsize=1, universal_newlines=True,
+                            creationflags=creation_flags
+                        )
+                        
+                        for line in process.stdout:
+                            update_dialog.append_output(line.rstrip())
+                        
+                        process.wait()
+                        
+                        if process.returncode == 0:
+                            update_dialog.set_status("Update complete!")
+                            update_dialog.append_output("\n✓ spotdl updated successfully!\n")
+                        else:
+                            update_dialog.set_status("Update failed!")
+                            update_dialog.append_output("\n✗ Update failed, continuing with current version.\n")
+                        
+                        update_dialog.enable_close()
+                    except Exception as e:
+                        update_dialog.set_status("Update failed!")
+                        update_dialog.append_output(f"\n✗ Error: {e}\n")
+                        update_dialog.enable_close()
+                
+                thread = threading.Thread(target=update_thread, daemon=True)
+                thread.start()
+                update_dialog.exec()
+        except Exception:
+            pass 
+        
+        if playlist_name in self.playlists and self.playlists[playlist_name]["songs"]:
+            first_song_dir = Path(self.playlists[playlist_name]["songs"][0]["path"]).parent
+            download_dir = first_song_dir
+        else:
+            download_dir = self.music_folder
+        
+        download_dir.mkdir(exist_ok=True)
+        
+        dialog = DownloadDialog(None)
+        dialog.show()
+        
+        worker = DownloadWorker(url, download_dir)
+        thread = QThread()
+        worker.moveToThread(thread)
+        
+        download_data = {
+            'worker': worker,
+            'thread': thread,
+            'dialog': dialog,
+            'name': playlist_name
+        }
+        self.active_downloads.append(download_data)
+        
+        worker.output.connect(dialog.append_output)
+        worker.status.connect(dialog.set_status)
+        worker.progress.connect(lambda min_v, max_v: dialog.set_progress_range(min_v, max_v))
+        
+        def on_finished(success, error_msg, songs):
+            if success:
+                dialog.set_status(f"✓ Complete! Imported {len(songs)} songs")
+                
+                existing_paths = {song["path"] for song in self.playlists[playlist_name]["songs"]}
+                added_count = 0
+                
+                for song in songs:
+                    if song["path"] not in [s["path"] for s in self.all_songs]:
+                        self.all_songs.append(song)
+                    
+                    if song["path"] not in existing_paths:
+                        self.playlists[playlist_name]["songs"].append(song)
+                        added_count += 1
+                
+                self.save_playlists()
+                
+                if self.current_playlist_name == playlist_name:
+                    self.display_songs(self.playlists[playlist_name]["songs"])
+                
+                QMessageBox.information(None, "Import Complete", 
+                                      f"Added {added_count} new songs to playlist '{playlist_name}'!\n"
+                                      f"Skipped {len(songs) - added_count} duplicates.")
             else:
                 dialog.set_status(f"✗ Failed: {error_msg}")
                 QMessageBox.critical(None, "Download Failed", 
@@ -1424,6 +1599,10 @@ class MusicPlayer(QMainWindow):
         import_action.triggered.connect(lambda: self.import_files_to_playlist(playlist_name))
         menu.addAction(import_action)
         
+        import_spotify_action = QAction("Import from Spotify...", self)
+        import_spotify_action.triggered.connect(lambda: self.import_spotify_to_playlist(playlist_name))
+        menu.addAction(import_spotify_action)
+        
         menu.exec(self.playlist_list.mapToGlobal(position))
     
     def delete_playlist(self, name):
@@ -1515,11 +1694,10 @@ class MusicPlayer(QMainWindow):
         menu.addMenu(add_to_menu)
         
         if self.current_playlist_name and self.current_playlist_name in self.playlists:
-            if not self.playlists[self.current_playlist_name].get("persistent", False):
-                menu.addSeparator()
-                remove_action = QAction("Remove from Playlist", self)
-                remove_action.triggered.connect(lambda: self.remove_song_from_playlist(index))
-                menu.addAction(remove_action)
+            menu.addSeparator()
+            remove_action = QAction("Remove from Playlist", self)
+            remove_action.triggered.connect(lambda: self.remove_song_from_playlist(index))
+            menu.addAction(remove_action)
         
         menu.addSeparator()
         
@@ -1541,12 +1719,12 @@ class MusicPlayer(QMainWindow):
     def show_song_info(self, song):
         """Show detailed song information"""
         info = f"""
-<b>Title:</b> {song['title']}<br>
-<b>Artist:</b> {song['artist']}<br>
-<b>Album:</b> {song['album']}<br>
-<b>Duration:</b> {self.format_time(song['duration'])}<br>
-<b>File:</b> {song['filename']}<br>
-<b>Path:</b> {song['path']}
+            <b>Title:</b> {song['title']}<br>
+            <b>Artist:</b> {song['artist']}<br>
+            <b>Album:</b> {song['album']}<br>
+            <b>Duration:</b> {self.format_time(song['duration'])}<br>
+            <b>File:</b> {song['filename']}<br>
+            <b>Path:</b> {song['path']}
         """
         msg = QMessageBox(self)
         msg.setWindowTitle("Song Information")
@@ -1651,9 +1829,6 @@ class MusicPlayer(QMainWindow):
             return
         
         playlist = self.playlists[self.current_playlist_name]
-        if playlist.get("persistent", False):
-            QMessageBox.warning(self, "Cannot Modify", "This is a persistent playlist.")
-            return
         
         song = self.current_playlist[index]
         playlist["songs"].remove(song)
