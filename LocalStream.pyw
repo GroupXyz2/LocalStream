@@ -22,7 +22,7 @@ from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 import mutagen
 from mutagen.mp3 import MP3
-from mutagen.id3 import ID3
+from mutagen.id3 import ID3, APIC
 
 
 class DownloadDialog(QDialog):
@@ -1040,6 +1040,40 @@ class MusicPlayer(QMainWindow):
                 for path in song_paths:
                     if path in songs_by_path:
                         songs.append(songs_by_path[path])
+                    elif Path(path).exists():
+                        try:
+                            audio = MP3(path)
+                            duration = int(audio.info.length)
+                            
+                            title = Path(path).stem
+                            artist = "Unknown Artist"
+                            album = "Unknown Album"
+                            album_art = None
+                            
+                            if hasattr(audio, 'tags') and audio.tags:
+                                if 'TIT2' in audio.tags:
+                                    title = str(audio.tags['TIT2'])
+                                if 'TPE1' in audio.tags:
+                                    artist = str(audio.tags['TPE1'])
+                                if 'TALB' in audio.tags:
+                                    album = str(audio.tags['TALB'])
+                                
+                                for tag in audio.tags.values():
+                                    if isinstance(tag, APIC):
+                                        album_art = tag.data
+                                        break
+                            
+                            song = {
+                                "path": path,
+                                "title": title,
+                                "artist": artist,
+                                "album": album,
+                                "duration": duration,
+                                "album_art": album_art
+                            }
+                            songs.append(song)
+                        except Exception as e:
+                            print(f"Error loading song {path}: {e}")
                 
                 if songs:
                     self.playlists[name] = {
@@ -1335,10 +1369,6 @@ class MusicPlayer(QMainWindow):
             return
         
         playlist = self.playlists[self.current_playlist_name]
-        if playlist.get("persistent", False):
-            QMessageBox.warning(self, "Cannot Reorder", "This is a persistent playlist and cannot be reordered.")
-            self.display_songs(playlist["songs"])
-            return
         
         new_order = []
         for i in range(self.song_list.count()):
@@ -1387,6 +1417,12 @@ class MusicPlayer(QMainWindow):
         rename_action = QAction("Rename Playlist", self)
         rename_action.triggered.connect(lambda: self.rename_playlist(playlist_name))
         menu.addAction(rename_action)
+        
+        menu.addSeparator()
+        
+        import_action = QAction("Import Files...", self)
+        import_action.triggered.connect(lambda: self.import_files_to_playlist(playlist_name))
+        menu.addAction(import_action)
         
         menu.exec(self.playlist_list.mapToGlobal(position))
     
@@ -1526,6 +1562,88 @@ class MusicPlayer(QMainWindow):
             QMessageBox.information(self, "Added", f"Added to '{playlist_name}'")
         else:
             QMessageBox.information(self, "Already in Playlist", f"Song already in '{playlist_name}'")
+    
+    def import_files_to_playlist(self, playlist_name):
+        """Import local MP3 files into an existing playlist"""
+        files, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Select MP3 Files to Import",
+            str(self.music_folder),
+            "MP3 Files (*.mp3);;All Files (*.*)"
+        )
+        
+        if not files:
+            return
+        
+        added_count = 0
+        duplicate_count = 0
+        error_files = []
+        
+        existing_paths = {song["path"] for song in self.playlists[playlist_name]["songs"]}
+        
+        for file_path in files:
+            try:
+                if file_path in existing_paths:
+                    duplicate_count += 1
+                    print(f"Skipped duplicate: {file_path}")
+                    continue
+                
+                audio = MP3(file_path)
+                duration = int(audio.info.length)
+                
+                title = Path(file_path).stem
+                artist = "Unknown Artist"
+                album = "Unknown Album"
+                album_art = None
+                
+                if hasattr(audio, 'tags') and audio.tags:
+                    if 'TIT2' in audio.tags:
+                        title = str(audio.tags['TIT2'])
+                    if 'TPE1' in audio.tags:
+                        artist = str(audio.tags['TPE1'])
+                    if 'TALB' in audio.tags:
+                        album = str(audio.tags['TALB'])
+                    
+                    for tag in audio.tags.values():
+                        if isinstance(tag, APIC):
+                            album_art = tag.data
+                            break
+                
+                song = {
+                    "path": file_path,
+                    "title": title,
+                    "artist": artist,
+                    "album": album,
+                    "duration": duration,
+                    "album_art": album_art
+                }
+                
+                self.playlists[playlist_name]["songs"].append(song)
+                added_count += 1
+                print(f"Added: {title} - {artist}")
+                    
+            except Exception as e:
+                error_msg = f"{Path(file_path).name}: {str(e)}"
+                error_files.append(error_msg)
+                print(f"Error importing {file_path}: {e}")
+                import traceback
+                traceback.print_exc()
+        
+        if added_count > 0:
+            self.save_playlists()
+            
+            if self.current_playlist_name == playlist_name:
+                self.display_songs(self.playlists[playlist_name]["songs"])
+        
+        message = f"Import complete!\n\nAdded: {added_count}\nDuplicates skipped: {duplicate_count}"
+        
+        if error_files:
+            message += f"\nErrors: {len(error_files)}\n\n"
+            message += "\n".join(error_files[:10])
+            if len(error_files) > 10:
+                message += f"\n... and {len(error_files) - 10} more errors"
+        
+        QMessageBox.information(self, "Import Files", message)
     
     def remove_song_from_playlist(self, index):
         """Remove a song from current playlist"""
